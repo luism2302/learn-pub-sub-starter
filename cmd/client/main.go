@@ -22,19 +22,23 @@ func main() {
 	}
 	defer conn.Close()
 	fmt.Println("Connection to RabbitMQ was successful")
+	AMQPChannel, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("Couldn't create AMQP channel. Error: %v", err)
+	}
 	username, err := gamelogic.ClientWelcome()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	_, _, err = pubsub.DeclareAndBind(conn, routing.ExchangePerilDirect, fmt.Sprintf("%s.%s", routing.PauseKey, username), routing.PauseKey, "transient")
-	if err != nil {
+	gameState := gamelogic.NewGameState(username)
+	if err := pubsub.SubscribeJSON(conn, routing.ExchangePerilDirect, fmt.Sprintf("%s.%s", routing.PauseKey, username), routing.PauseKey, "transient", handlerPause(gameState)); err != nil {
 		log.Fatal(err)
 	}
-
-	gameState := gamelogic.NewGameState(username)
+	if err := pubsub.SubscribeJSON(conn, routing.ExchangePerilTopic, fmt.Sprintf("%s.%s", routing.ArmyMovesPrefix, username), fmt.Sprintf("%s.*", routing.ArmyMovesPrefix), "transient", handlerMove(gameState)); err != nil {
+		log.Fatal(err)
+	}
 	running := true
-
 	for running {
 		input := gamelogic.GetInput()
 		if len(input) == 0 {
@@ -53,7 +57,11 @@ func main() {
 				log.Printf("%s", err)
 				continue
 			}
-			log.Printf("%s moved its units to %s", move.Player.Username, move.ToLocation)
+			if err := pubsub.PublishJSON(AMQPChannel, routing.ExchangePerilTopic, fmt.Sprintf("%s.%s", routing.ArmyMovesPrefix, username), move); err != nil {
+				log.Printf("Couln't publish message. Error: %s", err)
+				continue
+			}
+			log.Print("Move succesfully published!")
 		case "status":
 			gameState.CommandStatus()
 		case "help":
@@ -66,5 +74,29 @@ func main() {
 		default:
 			log.Print("Unknown command")
 		}
+	}
+}
+
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.AckType {
+	return func(ps routing.PlayingState) pubsub.AckType {
+		defer fmt.Print("> ")
+		gs.HandlePause(ps)
+		return pubsub.ACK
+	}
+}
+
+func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.AckType {
+	return func(move gamelogic.ArmyMove) pubsub.AckType {
+		outcome := gs.HandleMove(move)
+		fmt.Print("> ")
+		var ack pubsub.AckType
+		if outcome == gamelogic.MoveOutComeSafe || outcome == gamelogic.MoveOutcomeMakeWar {
+			ack = pubsub.ACK
+		} else if outcome == gamelogic.MoveOutcomeSamePlayer {
+			ack = pubsub.NACKDISCARD
+		} else {
+			ack = pubsub.NACKDISCARD
+		}
+		return ack
 	}
 }
