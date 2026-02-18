@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -34,9 +32,39 @@ func main() {
 		log.Fatal(err)
 	}
 
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
-	fmt.Println("Shutting down Peril client...")
-	conn.Close()
+	gameState := gamelogic.NewGameState(username)
+	running := true
+
+	for running {
+		input := gamelogic.GetInput()
+		if len(input) == 0 {
+			continue
+		}
+
+		switch input[0] {
+		case "spawn":
+			if err := gameState.CommandSpawn(input); err != nil {
+				log.Printf("%s", err)
+				continue
+			}
+		case "move":
+			move, err := gameState.CommandMove(input)
+			if err != nil {
+				log.Printf("%s", err)
+				continue
+			}
+			log.Printf("%s moved its units to %s", move.Player.Username, move.ToLocation)
+		case "status":
+			gameState.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "spam":
+			log.Print("Spamming not allowed yet")
+		case "quit":
+			gamelogic.PrintQuit()
+			running = false
+		default:
+			log.Print("Unknown command")
+		}
+	}
 }

@@ -23,6 +23,7 @@ func main() {
 	defer conn.Close()
 	fmt.Println("Connection to RabbitMQ was successful")
 	AMQPchannel, err := conn.Channel()
+	pubsub.DeclareAndBind(conn, routing.ExchangePerilTopic, routing.GameLogSlug, fmt.Sprintf("%s.*", routing.GameLogSlug), "durable")
 	gamelogic.PrintServerHelp()
 	running := true
 	for running {
